@@ -16,8 +16,6 @@
 #define DBG_ENABLE_SMOOTH_SAMPLE_MAP    1   // clouds dont tower anymore 
 #define DBG_ENABLE_SMOOTH_SAMPLE_COL    1   // Better k gradient
 #define DBG_ENABLE_STEP_SKIP            0   // Adaptive step-size multiplier in empty space
-#define DBG_ENABLE_GENTLE_NOISE         1   // Per-pixel noise added to final k
-#define DBG_ENABLE_DITHER               1   // Ordered dither on final k
 
 
 // Visualisation modes (pick at most one ? set others to 0)
@@ -177,20 +175,31 @@ float sampleDensity(vec3 pos, vec4 map) {
 
     // --- Surface turbulence ---
     #if DBG_ENABLE_SURFACE_TURBULENCE
+    float hRaw = clamp((pos.y - base) / max(top - base, 1.0), 0.0, 1.0);
+
     vec3 tp = noisePos + vec3(time * 0.018);
-    float surfaceTurb = noise(tp * 2.0)  * 0.7 +noise(tp * 4.5) * 0.38;
-    float turbDisplace = (surfaceTurb - 0.5) * thickness * 0.5;
+    float surfaceTurb = noise(tp * 2.0) * 1.7 + noise(tp * 4.5) * 0.78;
+    float heightInfluence = mix(0.0, 1.0, pow(hRaw, 1.2));
+    float turbDisplace = (surfaceTurb - 0.5) * thickness * 0.5 * heightInfluence;
+
+
+
+    float surfaceTurbBottom =  noise(tp * 4.5) * 0.28;
+    float turbDisplaceBottom = (surfaceTurbBottom - 0.2)  * thickness;
+
+
     float effectiveTop  = top  + turbDisplace;
-    float effectiveBase = base + turbDisplace;
+    float effectiveBase = base + turbDisplaceBottom;
     #else
     float effectiveTop  = top;
     float effectiveBase = base;
     #endif
 
-    float h = clamp((pos.y - effectiveBase) / max(effectiveTop - effectiveBase, 1.0), 0.0, 1.0);
+    float h = clamp((pos.y - effectiveBase * 0.3) / max(effectiveTop - effectiveBase, 0.3), 0.0, 1.0);
 
-    float vertProfile = smoothstep(0.0, 0.35, h)
-    * (1.0 - smoothstep(0.20, 1.0, h));
+    float vertProfile = smoothstep(0.0, 0.08, h)
+    * (1.0 - smoothstep(0.08, 1.0, h));
+    vertProfile = pow(vertProfile, 3.0);
 
     // --- Edge erosion ---
     float edgeDist = map.r;
@@ -225,41 +234,48 @@ float cloudShadow(vec3 pos) {
 }
 
 
-vec4 shadedCloudColour(vec3 pos, float h, float shadow) {
+vec4 shadedCloudColour(vec3 pos, float h, float shadow,float thickness ) {
     vec4 baseCol = sampleColSmooth(pos.xz);
     vec3 src = baseCol.rgb;
 
     float dayBrightness = clamp(luma(src) * 1.5, 0.0, 1.0);
 
-    float brightness = 0.9;
+    float brightness = 1.0;
 
     brightness += smoothstep(0.25, 1.0, h) * dayBrightness;
 
-    brightness -= (1.0 - smoothstep(0.0, 0.35, h)) * 0.55 * (1.0 - 0.45);
-
+    brightness += (1.0 - smoothstep(0.0, 0.55, h)) * 0.1;
+    
+    
+    
     brightness -= shadow * 0.25 * (1.0 - 0.55);
-
+    
     brightness += smoothstep(0.75, 0.98, h) * (1.0 - shadow) * (0.5 + dayBrightness * 0.4) * 0.3;
-
-
 
     return vec4(src * brightness, baseCol.a);
 }
 
 
+float igNoise(vec2 co) {
+    return fract(52.9829189 * fract(dot(co, vec2(0.06711056, 0.00583715))));
+}
+
 vec4 traverse(vec3 o, vec3 d, float far, float T) {
 
-    int STEPS = clamp(int(far * 3.0), 4, 128);
+
+    float verticalBias = 1.0 + 3.0 * abs(d.y);
+    int STEPS = clamp(int(far * 3.0 * verticalBias), 4, 128);
 
     float DENSITY = DBG_OVERRIDE_DENSITY_VALUE;
 
+
+
     float stepSize = far / float(STEPS);
     vec4  k        = vec4(0.0);
-    
 
-    float tOffset = noise(vec3(gl_FragCoord * 2.0));
+
+    float tOffset = igNoise(gl_FragCoord.xy + float(frame & 7) * 0.61803);
     float t = stepSize * (0.5 + tOffset);
-
     float stepMult  = 1.0;
 
     
@@ -284,11 +300,25 @@ vec4 traverse(vec3 o, vec3 d, float far, float T) {
                 float h    = clamp((pos.y - base) / max(top - base, 1.0), 0.0, 1.0);
 
                 float shadow = cloudShadow(pos);
+                vec4 col   = shadedCloudColour(pos, h, shadow, map.r);
 
+                float densityBoost = mix(2.5, 1.0, clamp(far / 4.0, 0.0, 1.0));
 
-                vec4 col   = shadedCloudColour(pos, h, shadow);
-                float alpha = 1.0 - exp(-density * stepSize * DENSITY);
+                
+                float tmpDENSITY =  DENSITY;
+                if((col.r + col.g + col.b )/3.0 < 0.5){
+                    tmpDENSITY += (col.r + col.g + col.b );
+                }
+                
+                
+                float alpha = 1.0 - exp(-density  * tmpDENSITY);
+                
+              
+                
                 k.rgb += (1.0 - k.a) * col.rgb * alpha;
+
+               
+                
                 k.a   += (1.0 - k.a) * alpha;
 
                 float bin = log(halfsmooth(( T  + t) * 50.0, 500.0) / OIT_BIN_SCALE + 1.0);
