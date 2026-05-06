@@ -1,0 +1,16 @@
+{
+    "type": "code",
+    "modid": "valksfuzzyclouds",
+    "name": "ValksFuzzyClouds",
+    "authors": [
+        "SilverValkyrie"
+    ],
+    "description": "not the one from Final Fantasy",
+    "version": "2.0.6",
+    "dependencies": {
+      "game": "1.22.0"
+    },
+  "side" : "Universal",
+  "requiredOnClient": true,
+  "requiredOnServer": false
+}
