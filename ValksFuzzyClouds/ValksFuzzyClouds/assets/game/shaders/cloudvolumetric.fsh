@@ -287,12 +287,10 @@ float igNoise(vec2 co) {
 vec4 traverse(vec3 o, vec3 d, float far, float T) {
 
 
-    float verticalBias = 1 + 3.0 * abs(d.y);
+    float verticalBias = 1 + 1.0 * abs(d.y);
     float distanceFactor = clamp(far / 8.0, 0.0, 1.0);
-    float stepsPerTile = mix(3.0, 0.8, distanceFactor * distanceFactor);
 
-
-    int STEPS = clamp(int(far * verticalBias), 4, 128);
+    int STEPS = clamp(int(far * verticalBias), 4, 64);
 
     float DENSITY = DBG_OVERRIDE_DENSITY_VALUE;
 
