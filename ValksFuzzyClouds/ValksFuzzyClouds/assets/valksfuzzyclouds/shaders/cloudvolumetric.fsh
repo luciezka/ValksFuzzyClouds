@@ -214,8 +214,8 @@ vec2 sampleDensity(vec3 pos, vec4 map) {
     #if DBG_ENABLE_EDGE_EROSION
     vec3 ep = noisePos + vec3(time * 0.01);
     float erosion = noise(ep * 4.0) * 0.50;
-    const float erosionStrength = 0.45;
-    const float edgeBand        = 1.1;
+    const float erosionStrength = 0.05;
+    const float edgeBand        = 0.5;
     float coverage = smoothstep(0.0, edgeBand, edgeDist - (1.0 - erosion) * erosionStrength);
     #else
     float coverage = smoothstep(0.0, 0.5, edgeDist);
