@@ -40,12 +40,6 @@
     </ItemGroup>
 
     <ItemGroup>
-        <Content Include="modicon.png">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </Content>
-    </ItemGroup>
-
-    <ItemGroup>
         <Reference Include="OpenTK">
             <HintPath>E:\Games\Vintagestory\Lib/OpenTK.Graphics.dll</HintPath>
             <Private>false</Private>

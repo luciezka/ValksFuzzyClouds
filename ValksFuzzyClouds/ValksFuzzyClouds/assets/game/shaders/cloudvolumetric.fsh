@@ -6,7 +6,7 @@
 // ============================================================
 
 #define DBG_ENABLE_SURFACE_TURBULENCE   1   // Warps cloud top/base with time-animated noise
-#define DBG_ENABLE_EDGE_EROSION         1   // Erodes cloud edges with noise (coverage mask) Does it do anything ?
+#define DBG_ENABLE_EDGE_EROSION         0   // Erodes cloud edges with noise (coverage mask) Does it do anything ?
 #define DBG_ENABLE_CLOUD_SHADOW         1   // Vertical self-shadow raycast upward through cloud
 #define DBG_ENABLE_TOP_BRIGHTENING      1   // Bright rim at cloud tops
 #define DBG_ENABLE_BASE_DARKENING       1   // Dark underside shading
@@ -160,8 +160,8 @@ vec4 sampleColSmooth(vec2 pos) {
 // -------------------------------------------------------
 // Density at a continuous 3D position
 // -------------------------------------------------------
-float sampleDensity(vec3 pos, vec4 map) {
-    if(map.r <= 0.0) return 0.0;
+vec2 sampleDensity(vec3 pos, vec4 map) {
+    if(map.r <= 0.0) return vec2(0.0);
 
     float base      = map.b;
     float top       = map.a * 0.5;
@@ -171,25 +171,34 @@ float sampleDensity(vec3 pos, vec4 map) {
     worldPos.xz = (pos.xz - cloudMapWidth * 0.5) * cloudTileSize + cloudOffset.xz;
     worldPos.y  = pos.y * cloudTileSize * 1.2;
 
-    vec3 noisePos = worldPos / 120.0;
+    vec3 noisePos = worldPos/ 120.0;
 
-    // --- Surface turbulence ---
+    float turbulenceOut = 0.0; 
+
     #if DBG_ENABLE_SURFACE_TURBULENCE
     float hRaw = clamp((pos.y - base) / max(top - base, 1.0), 0.0, 1.0);
 
     vec3 tp = noisePos + vec3(time * 0.018);
-    float surfaceTurb = noise(tp * 2.0) * 1.7 + noise(tp * 4.5) * 0.78;
+    float surfaceTurb = (noise(tp * 2.0)* 2.0 - 1.0) * 1.5 + (noise(tp * 4.5)* 2.0 - 1.0) * 0.78;
     float heightInfluence = mix(0.0, 1.0, pow(hRaw, 1.2));
-    float turbDisplace = (surfaceTurb - 0.5) * thickness * 0.5 * heightInfluence;
+    float turbDisplace = (surfaceTurb - 0.4 * thickness) * thickness * 0.5 * heightInfluence;
+    
+    float surfaceTurbBottom = (noise(tp * 2.2)- 1.0)* 1.70 * thickness * 0.3;
+    
+    float curvedTurb =sign(surfaceTurbBottom)
+    * mix(abs(surfaceTurbBottom),
+    surfaceTurbBottom * surfaceTurbBottom,
+    0.4);
+    
+    float turbDisplaceBottom = max((curvedTurb - min(pow(thickness,0.8), 2.6) * 0.3),-4.11);
 
-
-
-    float surfaceTurbBottom =  noise(tp * 4.5) * 0.28;
-    float turbDisplaceBottom = (surfaceTurbBottom - 0.2)  * thickness;
-
-
-    float effectiveTop  = top  + turbDisplace;
+    float effectiveTop  = top + turbDisplace;
     float effectiveBase = base + turbDisplaceBottom;
+
+
+    float topTurbNorm    = clamp(surfaceTurb / 2.28, 0.0, 1.0); 
+    float bottomTurbNorm = surfaceTurbBottom;
+    turbulenceOut = mix(bottomTurbNorm, topTurbNorm, heightInfluence);
     #else
     float effectiveTop  = top;
     float effectiveBase = base;
@@ -201,12 +210,10 @@ float sampleDensity(vec3 pos, vec4 map) {
     * (1.0 - smoothstep(0.08, 1.0, h));
     vertProfile = pow(vertProfile, 3.0);
 
-    // --- Edge erosion ---
     float edgeDist = map.r;
     #if DBG_ENABLE_EDGE_EROSION
     vec3 ep = noisePos + vec3(time * 0.01);
-    float erosion = noise(ep *  4.0) * 0.50;
-
+    float erosion = noise(ep * 4.0) * 0.50;
     const float erosionStrength = 0.55;
     const float edgeBand        = 1.5;
     float coverage = smoothstep(0.0, edgeBand, edgeDist - (1.0 - erosion) * erosionStrength);
@@ -214,44 +221,53 @@ float sampleDensity(vec3 pos, vec4 map) {
     float coverage = smoothstep(0.0, 0.5, edgeDist);
     #endif
 
-    return coverage * vertProfile;
+    return vec2(coverage * vertProfile, turbulenceOut);
 }
 
 
-float cloudShadow(vec3 pos) {
-    vec4 map = sampleSmooth(pos.xz);
 
-    float base      = map.b;
-    float top       = map.a * 0.5;
-    float coverage  = map.r;
-
-    if(coverage <= 0.0) return 0.0;
-
-    float h = clamp((pos.y - base) / max(top - base, 1.0), 0.0, 1.0);
-    float overhead = (1.0 - h) * coverage;
-
-    return smoothstep(0.0, 1.0, clamp(overhead * 1.4, 0.0, 1.0));
-}
-
-
-vec4 shadedCloudColour(vec3 pos, float h, float shadow,float thickness ) {
+vec4 shadedCloudColour(vec3 pos, float h, float thickness, float turbulence) {
     vec4 baseCol = sampleColSmooth(pos.xz);
     vec3 src = baseCol.rgb;
-
+    
+    
     float dayBrightness = clamp(luma(src) * 1.5, 0.0, 1.0);
+    float brightness = 0.8;
 
-    float brightness = 1.0;
+    brightness += (h < 0.2
+    ? mix(0.3, 0.6, smoothstep(0.0, 0.2, h))
+    : mix(0.6, 1.0, smoothstep(0.2, 1.0, h))
+    ) * dayBrightness;
+    
+    
+    float bottomness = pow(1.0 - h, 2.0);
+    vec3 blueTint = vec3(0.42, 0.67, 1.0);
+    vec3 greyTint = vec3(0.82, 0.9, 1.0);
 
-    brightness += smoothstep(0.25, 1.0, h) * dayBrightness;
+    float blueStrength   = min((1.0 - smoothstep(0.1, 1.0, h)) * 0.45,0.5);
+    src = mix(src, src * blueTint, blueStrength);
 
-    brightness += (1.0 - smoothstep(0.0, 0.55, h)) * 0.1;
+    float greyColourMask = 1.0 - smoothstep(0.0, 0.35, src.x);
+    float greyStrength   = greyColourMask * bottomness * 5.35;
+    if(src.x + src.y + src.z < 0.5){ 
+        src = mix(src, src * greyTint, min(greyStrength, 0.5));
+    }
+    
+
+    vec3 turbColour = vec3(1.0, 1.0, 1.0);          
+    vec3 turbColourLower = vec3(0.18, 0.19, 0.11);       
+    float turbStrength = smoothstep(0.0, 0.85, turbulence);
+
+    if(h > 0.2){
+        src = mix(src, src * turbColour, turbStrength  * 0.01);
+    }
+    if(h < 0.2){
+        src = mix(src, src * turbColourLower, turbStrength * 0.7 );
+    }
     
     
     
-    brightness -= shadow * 0.25 * (1.0 - 0.55);
     
-    brightness += smoothstep(0.75, 0.98, h) * (1.0 - shadow) * (0.5 + dayBrightness * 0.4) * 0.3;
-
     return vec4(src * brightness, baseCol.a);
 }
 
@@ -263,8 +279,12 @@ float igNoise(vec2 co) {
 vec4 traverse(vec3 o, vec3 d, float far, float T) {
 
 
-    float verticalBias = 1.0 + 3.0 * abs(d.y);
-    int STEPS = clamp(int(far * 3.0 * verticalBias), 4, 128);
+    float verticalBias = 1 + 3.0 * abs(d.y);
+    float distanceFactor = clamp(far / 8.0, 0.0, 1.0);
+    float stepsPerTile = mix(3.0, 0.8, distanceFactor * distanceFactor);
+
+
+    int STEPS = clamp(int(far * verticalBias), 4, 128);
 
     float DENSITY = DBG_OVERRIDE_DENSITY_VALUE;
 
@@ -274,7 +294,7 @@ vec4 traverse(vec3 o, vec3 d, float far, float T) {
     vec4  k        = vec4(0.0);
 
 
-    float tOffset = igNoise(gl_FragCoord.xy + float(frame & 7) * 0.61803);
+    float tOffset = igNoise(gl_FragCoord.xy  + float(frame & 14) * 0.61803);
     float t = stepSize * (0.5 + tOffset);
     float stepMult  = 1.0;
 
@@ -292,15 +312,17 @@ vec4 traverse(vec3 o, vec3 d, float far, float T) {
             stepMult = 1.0;
 
             vec4 map = sampleSmooth(pos.xz);
-            float density = sampleDensity(pos,map);
+            vec2 densityResult = sampleDensity(pos, map);
+            float density      = densityResult.x;
+            float turbulence   = densityResult.y;
 
             if(density > 0.0){
                 float base = map.b;
                 float top  = map.a * 0.5;
                 float h    = clamp((pos.y - base) / max(top - base, 1.0), 0.0, 1.0);
 
-                float shadow = cloudShadow(pos);
-                vec4 col   = shadedCloudColour(pos, h, shadow, map.r);
+          
+                vec4 col   = shadedCloudColour(pos, h, map.r,turbulence);
 
                 float densityBoost = mix(2.5, 1.0, clamp(far / 4.0, 0.0, 1.0));
 
